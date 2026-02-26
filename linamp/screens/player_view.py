@@ -24,4 +24,4 @@ class PlayerView(Screen):
         yield TransportControls()
         yield VolumeBar()
         yield Visualizer()
-        yield PlaylistPanel()
+        yield PlaylistPanel(stations=self.app.flat_stations)

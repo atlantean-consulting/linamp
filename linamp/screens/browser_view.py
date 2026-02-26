@@ -31,6 +31,37 @@ class NowPlayingBar(Static):
             self.update("■ Stopped")
 
 
+class CommandHints(Static):
+    """MC-style command hint bar for browser view."""
+
+    DEFAULT_CSS = """
+    CommandHints {
+        height: 1;
+        dock: bottom;
+        background: #313244;
+        color: #cdd6f4;
+        padding: 0 1;
+    }
+    CommandHints .hint-key {
+        color: #f9e2af;
+        text-style: bold;
+    }
+    """
+
+    def __init__(self) -> None:
+        hints = (
+            "[b #f9e2af]f[/] Folder  "
+            "[b #f9e2af]a[/] Add  "
+            "[b #f9e2af]d[/] Delete  "
+            "[b #f9e2af]r[/] Rename  "
+            "[b #f9e2af]e[/] Edit  "
+            "[b #f9e2af]C-↑↓[/] Move  "
+            "[b #f9e2af]Enter[/] Play  "
+            "[b #f9e2af]Tab[/] View"
+        )
+        super().__init__(hints)
+
+
 class BrowserView(Screen):
     """MC-style dual-pane browser view."""
 
@@ -51,6 +82,7 @@ class BrowserView(Screen):
 
     def compose(self) -> ComposeResult:
         with Horizontal():
-            yield StationList()
-            yield PlaylistPanel()
+            yield StationList(library=self.app.library)
+            yield PlaylistPanel(stations=self.app.flat_stations)
         yield NowPlayingBar("■ Stopped")
+        yield CommandHints()

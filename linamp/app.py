@@ -2,8 +2,9 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer
 
-from linamp.messages import PlayerStateUpdate, StationSelected
+from linamp.messages import PlayerStateUpdate, StationSelected, LibraryChanged
 from linamp.player import AudioPlayer
+from linamp.stations import load_library, save_library, all_stations
 from linamp.screens.player_view import PlayerView
 from linamp.screens.browser_view import BrowserView
 
@@ -42,6 +43,11 @@ class LinampApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.audio = AudioPlayer()
+        self.library = load_library()
+
+    @property
+    def flat_stations(self) -> list:
+        return all_stations(self.library)
 
     def on_mount(self) -> None:
         self.set_interval(0.5, self._poll_player_state)
@@ -82,6 +88,13 @@ class LinampApp(App):
 
     def on_station_selected(self, event: StationSelected) -> None:
         self.audio.play(event.station)
+
+    async def on_library_changed(self, event: LibraryChanged) -> None:
+        self.library = list(event.folders)
+        save_library(self.library)
+        # Re-broadcast to all PlaylistPanels (siblings don't receive bubbled messages)
+        for panel in self.query("PlaylistPanel"):
+            await panel.on_library_changed(event)
 
     def on_unmount(self) -> None:
         self.audio.shutdown()

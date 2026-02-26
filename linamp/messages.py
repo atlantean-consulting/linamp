@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from textual.message import Message
 
-from linamp.stations import Station
+from linamp.stations import Station, Folder
 
 
 class PlayerStateUpdate(Message):
@@ -34,3 +34,11 @@ class StationSelected(Message):
     def __init__(self, station: Station) -> None:
         super().__init__()
         self.station = station
+
+
+class LibraryChanged(Message):
+    """Library was modified (folders/stations added/removed/renamed/rearranged)."""
+
+    def __init__(self, folders: list[Folder]) -> None:
+        super().__init__()
+        self.folders = folders

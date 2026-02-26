@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import logging
+import shutil
+import subprocess
+
 import mpv
 
 from linamp.stations import Station
+
+log = logging.getLogger(__name__)
 
 
 class AudioPlayer:
@@ -13,6 +19,7 @@ class AudioPlayer:
             video=False,
             terminal=False,
             input_terminal=False,
+            ytdl_format="bestaudio/best",
         )
         self._current_station: Station | None = None
         self._stopped = True
@@ -20,7 +27,55 @@ class AudioPlayer:
     def play(self, station: Station) -> None:
         self._current_station = station
         self._stopped = False
-        self._mpv.play(station.url)
+        url = self._resolve_url(station.url)
+        self._mpv.play(url)
+
+    # Domains where mpv's built-in ytdl hook handles playback natively.
+    # We pass these URLs straight through — pre-resolving would produce
+    # temporary signed URLs that expire before mpv can use them.
+    YTDL_DOMAINS = (
+        "youtube.com", "youtu.be", "youtube-nocookie.com",
+        "music.youtube.com",
+    )
+
+    @classmethod
+    def _is_ytdl_url(cls, url: str) -> bool:
+        """Check if a URL should be handled by mpv's ytdl hook."""
+        from urllib.parse import urlparse
+        try:
+            host = urlparse(url).hostname or ""
+            return any(host == d or host.endswith("." + d) for d in cls.YTDL_DOMAINS)
+        except Exception:
+            return False
+
+    @classmethod
+    def _resolve_url(cls, url: str) -> str:
+        """Try yt-dlp to extract a direct stream URL, fall back to raw URL.
+
+        YouTube URLs are passed through directly — mpv's ytdl hook handles
+        them better than pre-resolved temporary URLs that expire quickly.
+        """
+        # Let mpv's ytdl hook handle known video platforms directly
+        if cls._is_ytdl_url(url):
+            return url
+        # Skip resolution for direct stream URLs (icecast/shoutcast/raw audio)
+        if any(h in url for h in ("ice", "stream", ".mp3", ".aac", ".ogg", ".m3u", ".pls")):
+            return url
+        ytdlp = shutil.which("yt-dlp")
+        if not ytdlp:
+            return url
+        try:
+            result = subprocess.run(
+                [ytdlp, "--no-download", "--print", "urls", "-f", "bestaudio/best", url],
+                capture_output=True, text=True, timeout=15,
+            )
+            resolved = result.stdout.strip().splitlines()
+            if result.returncode == 0 and resolved and resolved[0]:
+                log.info("yt-dlp resolved %s → %s", url, resolved[0])
+                return resolved[0]
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            log.debug("yt-dlp failed for %s: %s", url, exc)
+        return url
 
     def toggle_pause(self) -> None:
         if self._stopped:

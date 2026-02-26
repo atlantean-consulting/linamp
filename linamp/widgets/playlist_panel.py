@@ -2,8 +2,8 @@ from textual.app import ComposeResult
 from textual.containers import Container
 from textual.widgets import ListView, ListItem, Label
 
-from linamp.messages import PlayerStateUpdate, StationSelected
-from linamp.stations import Station, STATIONS
+from linamp.messages import PlayerStateUpdate, StationSelected, LibraryChanged
+from linamp.stations import Station, all_stations, DEFAULT_LIBRARY
 
 
 class PlaylistPanel(Container):
@@ -25,7 +25,7 @@ class PlaylistPanel(Container):
 
     def __init__(self, stations: list[Station] | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._stations = stations or STATIONS
+        self._stations = stations or all_stations(DEFAULT_LIBRARY)
         self._active_index: int | None = None
 
     def compose(self) -> ComposeResult:
@@ -73,3 +73,12 @@ class PlaylistPanel(Container):
                     pass
 
             self._active_index = new_index
+
+    async def on_library_changed(self, event: LibraryChanged) -> None:
+        self._stations = all_stations(event.folders)
+        self._active_index = None
+        lv = self.query_one(ListView)
+        await lv.clear()
+        for i, station in enumerate(self._stations):
+            label = Label(f"  {station.name} [{station.genre}]")
+            lv.append(ListItem(label, id=f"station-{i}"))
