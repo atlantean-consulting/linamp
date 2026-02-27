@@ -3,12 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from textual.binding import Binding
 from textual.containers import Container
 from textual.app import ComposeResult
 from textual.widgets import DirectoryTree
 
-from linamp.messages import StationSelected
+from linamp.messages import FileHighlighted, StationSelected
 from linamp.stations import Station
 
 AUDIO_EXTENSIONS = {".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".aac", ".wma"}
@@ -37,10 +36,6 @@ class FileBrowser(Container):
     }
     """
 
-    BINDINGS = [
-        Binding("enter", "play_selected", "Play", priority=True),
-    ]
-
     def __init__(self, root: Path, **kwargs) -> None:
         super().__init__(**kwargs)
         self._root = root
@@ -48,12 +43,22 @@ class FileBrowser(Container):
     def compose(self) -> ComposeResult:
         yield AudioDirectoryTree(str(self._root))
 
-    def action_play_selected(self) -> None:
-        tree = self.query_one(AudioDirectoryTree)
-        node = tree.cursor_node
-        if node is None or node.data is None:
+    def on_tree_node_highlighted(self, event: DirectoryTree.NodeHighlighted) -> None:
+        """Cursor moved — emit FileHighlighted for the metadata panel."""
+        if event.node.data is None:
+            self.post_message(FileHighlighted(None))
             return
-        path = node.data.path
+        path = event.node.data.path
+        if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
+            self.post_message(FileHighlighted(path))
+        else:
+            self.post_message(FileHighlighted(None))
+
+    def on_tree_node_selected(self, event: DirectoryTree.NodeSelected) -> None:
+        """Handle Enter on tree nodes — play audio files, let dirs expand normally."""
+        if event.node.data is None:
+            return
+        path = event.node.data.path
         if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
             station = Station(
                 name=path.stem,

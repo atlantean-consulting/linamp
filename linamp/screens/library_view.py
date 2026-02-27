@@ -5,7 +5,9 @@ from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Static
 
+from linamp.messages import FileHighlighted
 from linamp.widgets.file_browser import FileBrowser
+from linamp.widgets.metadata_panel import MetadataPanel
 from linamp.widgets.now_playing_bar import NowPlayingBar
 
 
@@ -42,18 +44,20 @@ class LibraryView(Screen):
     LibraryView Horizontal {
         height: 1fr;
     }
-    LibraryView #file-info {
-        width: 1fr;
-        border: round $primary;
-        padding: 1 2;
-        color: #585b70;
-    }
     """
 
     def compose(self) -> ComposeResult:
         root = Path(self.app.config.music_root).expanduser()
         with Horizontal():
             yield FileBrowser(root=root)
-            yield Static("Select a file to view info", id="file-info")
+            yield MetadataPanel()
         yield NowPlayingBar("\u25a0 Stopped")
         yield LibraryCommandHints()
+
+    async def on_file_highlighted(self, event: FileHighlighted) -> None:
+        """Update metadata panel when file cursor moves."""
+        panel = self.query_one(MetadataPanel)
+        if event.path is not None:
+            await panel.update_metadata(event.path)
+        else:
+            panel.clear_metadata()

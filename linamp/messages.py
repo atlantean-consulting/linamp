@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.message import Message
 
 from linamp.stations import Station, Folder
@@ -36,6 +38,14 @@ class StationSelected(Message):
     def __init__(self, station: Station) -> None:
         super().__init__()
         self.station = station
+
+
+class FileHighlighted(Message):
+    """User highlighted a file in the library browser."""
+
+    def __init__(self, path: Path | None) -> None:
+        super().__init__()
+        self.path = path
 
 
 class LibraryChanged(Message):
