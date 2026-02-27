@@ -23,7 +23,7 @@ python -m linamp.library      # Standalone library manager (direct)
 1. **LinampApp** (`linamp/app.py`) — Player + radio browser. Two views toggled with Tab:
    - **Player View** (default) — Winamp-style compact player: now-playing, progress bar, transport controls, volume, visualizer, playlist
    - **Browser View** — MC-style dual pane: folder/station tree (left) + flat play queue (right) + now-playing bar + command hints (bottom)
-2. **LibraryApp** (`linamp/library.py`) — Standalone local music library manager. MC-style dual pane: directory tree filtered to audio files (left) + file info placeholder (right). Launched via `python -m linamp.library`, `python -m linamp --library`, or F5 from within LinampApp (suspends TUI, audio keeps playing).
+2. **LibraryApp** (`linamp/library.py`) — Standalone local music library manager. MC-style dual pane: directory tree filtered to audio files (left) + metadata panel (right, shows tags via mutagen with inline editing). Launched via `python -m linamp.library`, `python -m linamp --library`, or F5 from within LinampApp (suspends TUI, audio keeps playing).
 
 ### Key modules
 - `linamp/app.py` — Main Textual App (player + radio browser). Owns `AudioPlayer` singleton (`self.audio`), `self.config` (`AppConfig`), and `self.library` (list of `Folder`). Manages modes via `MODES` dict + `DEFAULT_MODE`. Polls player state every 500ms via `set_interval`, broadcasting `PlayerStateUpdate` to each widget individually via `screen.walk_children()` (creating a fresh message per widget to avoid Textual's stop-propagation). `flat_stations` property flattens library for playlist panels. Handles `LibraryChanged` by saving to disk and re-broadcasting to sibling `PlaylistPanel` widgets (Textual messages only bubble up, not sideways). F5 binding suspends TUI and launches library manager as subprocess (`subprocess.run` + `self.suspend()`); audio playback continues via mpv.
@@ -31,14 +31,16 @@ python -m linamp.library      # Standalone library manager (direct)
 - `linamp/config.py` — `AppConfig` dataclass (`music_root` field, default `~/Music`) + `load_config()`/`save_config()`. Persisted at `~/.config/linamp/config.json`.
 - `linamp/player.py` — mpv wrapper. Critical flags: `video=False, terminal=False, input_terminal=False, ytdl_format="bestaudio/best"`. Properties: `icy_title` (ICY stream metadata), `media_title` (mpv's synthesized title incorporating stream metadata), `metadata` (raw dict). URL resolution pipeline: local file paths (starting with `/`) pass through directly; YouTube URLs pass to mpv's ytdl hook; direct stream URLs skip resolution; other URLs try yt-dlp extraction. `_is_ytdl_url()` classmethod identifies YouTube domains. `YTDL_DOMAINS` tuple lists recognized domains.
 - `linamp/stations.py` — `Station` dataclass (name, url, genre) + `Folder` dataclass (name, stations). `load_library()` reads `~/.config/linamp/stations.json` with auto-migration from old flat format. `save_library()` writes folder structure. `all_stations()` helper flattens folders. `_migrate_flat_list()` auto-categorizes stations into Radio/YouTube folders based on URL. Legacy `load_stations()`/`save_stations()`/`STATIONS` aliases kept for backwards compat.
-- `linamp/messages.py` — `PlayerStateUpdate` (broadcast by poll timer, carries `icy_title`, `media_title`, and other state), `StationSelected` (from UI interaction), `LibraryChanged` (from station management CRUD, carries `list[Folder]`).
+- `linamp/metadata.py` — Audio metadata read/write via mutagen. `read_metadata(filepath)` returns normalized dict (title, artist, album, track, year, genre, duration, bitrate, sample_rate, format, file_size) across MP3/ID3, MP4, FLAC, OGG. `write_metadata(filepath, tags)` writes a subset of tags back using format-appropriate methods (ID3 frames for MP3, iTunes atoms for MP4, Vorbis comments for FLAC/OGG). Both handle format detection internally. `read_metadata` never raises; `write_metadata` raises on failure.
+- `linamp/messages.py` — `PlayerStateUpdate` (broadcast by poll timer, carries `icy_title`, `media_title`, and other state), `StationSelected` (from UI interaction), `FileHighlighted` (from FileBrowser cursor movement, carries `Path | None`), `LibraryChanged` (from station management CRUD, carries `list[Folder]`).
 - `linamp/screens/player_view.py` — PlayerView screen. Passes `self.app.flat_stations` to PlaylistPanel.
 - `linamp/screens/browser_view.py` — BrowserView screen with `CommandHints` (MC-style key hints using Rich markup) and dual-pane layout. Passes `self.app.library` to StationList and `self.app.flat_stations` to PlaylistPanel. Uses shared `NowPlayingBar` from widgets.
-- `linamp/screens/library_view.py` — LibraryView screen for the standalone library manager. Dual-pane: `FileBrowser` (left) + file info placeholder (right) + `NowPlayingBar` + `LibraryCommandHints`.
+- `linamp/screens/library_view.py` — LibraryView screen for the standalone library manager. Dual-pane: `FileBrowser` (left) + `MetadataPanel` (right) + `NowPlayingBar` + `LibraryCommandHints`. Handles `FileHighlighted` messages to update metadata panel on cursor movement. Owns the `e` binding for tag editing (at screen level with `priority=True` so it fires regardless of focus pane), delegating to `MetadataPanel.action_edit()`.
 - `linamp/widgets/station_list.py` — Left pane browser. Uses Textual `Tree` widget (not ListView) with folder nodes (📁) and station leaves (📻 for radio, 🎵 for YouTube). Full CRUD: add/delete/rename/edit stations and folders, move stations within folders. Inline `Input` widgets for editing. YouTube URL auto-detection: fetches title via yt-dlp in background thread (`asyncio.to_thread`), auto-fills name and genre. Add flow is URL-first to enable auto-detection. Delete requires double-press confirmation.
 - `linamp/widgets/playlist_panel.py` — Right pane flat play queue. Shows all stations across all folders. Highlights active station with ▶ icon. Handles `LibraryChanged` to rebuild list (must `await lv.clear()` before appending — see Textual notes).
 - `linamp/widgets/now_playing_bar.py` — Shared `NowPlayingBar` widget (compact 1-line status bar with metadata priority). Used by both BrowserView and LibraryView.
-- `linamp/widgets/file_browser.py` — `AudioDirectoryTree` (Textual `DirectoryTree` subclass filtered to audio extensions: .mp3, .flac, .m4a, .ogg, .opus, .wav, .aac, .wma) + `FileBrowser` container wrapper. Posts `StationSelected` on Enter with `Station(url=file_path)`.
+- `linamp/widgets/file_browser.py` — `AudioDirectoryTree` (Textual `DirectoryTree` subclass filtered to audio extensions: .mp3, .flac, .m4a, .ogg, .opus, .wav, .aac, .wma) + `FileBrowser` container wrapper. Posts `FileHighlighted` on cursor movement (for metadata panel), and `StationSelected` on Enter (for playback). Uses Textual's built-in `on_tree_node_highlighted`/`on_tree_node_selected` handlers — does NOT override Enter with a custom `Binding` (that would steal Enter from `DirectoryTree` and prevent folder expand/collapse).
+- `linamp/widgets/metadata_panel.py` — Right-pane metadata display with inline tag editing. Displays 11 fields read from mutagen (title, artist, album, track, year, genre, duration, bitrate, sample_rate, format, file_size). Edit mode (`e` key, handled at screen level): replaces editable fields (title, artist, album, track, year, genre) with `Input` widgets, Tab between fields, Enter saves via `write_metadata()`, Escape cancels. Uses `MODE_BROWSE`/`MODE_EDIT` state machine. Metadata loading is async (`asyncio.to_thread`) to avoid blocking UI.
 - `linamp/widgets/track_info.py` — Standalone now-playing widget (not currently wired into any view). Shows "NOW PLAYING" label + track title with metadata priority: ICY title > media title > station name.
 - `linamp/widgets/transport.py` — Transport controls using `Static` widgets with `border: round` (not Textual `Button` which has pseudo-3D styling that clashes with box-drawing UI).
 - `linamp/widgets/` — All widgets extend `Container` (not `Widget`) because Textual 8.0 requires container semantics for widgets that compose children.
@@ -75,6 +77,9 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 - `$text-muted` and `$text-disabled` are NOT valid Textual CSS color variables for border colors. Use hex colors instead (e.g., `#585b70`).
 - CSS `height` includes borders. A widget with `border: round` and `height: 3` has only 1 row of content (border-top + content + border-bottom). For 2 lines of content with a border, use `height: 4`.
 - Action methods can be `async def` — Textual will await them automatically.
+- Bindings on a widget only fire when that widget (or a descendant) has focus. For keybindings that should work regardless of which pane has focus, define the binding on the **Screen** (e.g., `LibraryView`) with `priority=True`, then delegate to the target widget's method.
+- Do NOT override `DirectoryTree`'s Enter key with a custom `Binding` on a parent container — it steals the keypress before the tree can expand/collapse folders. Instead, use `on_tree_node_selected` to react after the tree has handled the event.
+- Textual `Input` widgets need `height: 3` minimum to be visible (border + content + border). At `height: 1` with `border: none`, the text content area can be squeezed to zero, making typed text invisible. Set an explicit `color` on Input widgets — they may inherit a muted color that blends with the background.
 
 ## Keybindings
 
@@ -106,14 +111,18 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 ### Library manager keybindings
 | Key | Action |
 |-----|--------|
-| Enter | Play selected file |
+| Enter | Play selected file / expand-collapse folder |
 | Up/Down | Navigate directory tree |
+| e | Edit tags of highlighted file (enter edit mode) |
+| Tab | Next field (in edit mode) |
+| Enter | Save edits (in edit mode) |
+| Escape | Cancel edit (in edit mode) |
 | q | Quit library manager (returns to player if launched via F5) |
 
 ## Phase Roadmap
 1. **Internet Radio** ✅ (Phase 1) — 8 default stations, streaming via mpv
 2. **Station Management + YouTube** ✅ (Phase 1.5) — CRUD, folder tree, persistence, yt-dlp integration
-3. **Local Library** 🚧 (Phase 3, in progress) — Standalone library manager app with audio directory browsing. Next: metadata display panel (mutagen), inline tag editing, next/prev track, config editing.
+3. **Local Library** 🚧 (Phase 3, in progress) — Standalone library manager with audio directory browsing, metadata display panel (mutagen), and inline tag editing. Next: next/prev track navigation, config editing.
 4. **Apple Music** — TBD, DRM challenges
 
 ## Stations
@@ -129,7 +138,7 @@ Stream URLs are persisted in `~/.config/linamp/stations.json`. Notable confirmed
 - Visualizer is simulated (random bars that pulse during playback). Real FFT from mpv is complex — deferred to later phase.
 - Player state is polled (500ms interval) rather than using mpv property observer callbacks, to avoid threading issues between mpv threads and Textual's asyncio loop.
 - `AudioPlayer` is a singleton on LinampApp, accessed via `self.app.audio` from screens/widgets. LibraryApp does not have an AudioPlayer (it's a management tool, not a player).
-- **mutagen** is included as a dependency for upcoming metadata read/write support (Phase 3 milestone 2).
+- **mutagen** provides metadata read/write. `read_metadata()` normalizes tags across formats; `write_metadata()` writes back using format-native APIs (ID3 frames, MP4 atoms, Vorbis comments). Both are in `linamp/metadata.py`.
 - Transport buttons use `Static` + `border: round` instead of `Button` to match the box-drawing aesthetic of the rest of the UI.
 - yt-dlp must be kept up to date — YouTube frequently changes their streaming format. An outdated yt-dlp will fail with HTTP 403 errors. The version that ships with pip may be stale; run `pip install --upgrade yt-dlp` if YouTube playback breaks.
 - When finding radio stream URLs: check the station's FAQ/audio help page, look for StreamGuys/Triton/SecureNet patterns, probe mount point variants (e.g., `/wext1`, `/wmht1`). HTTP 200 with `content-type: audio/*` confirms a working stream.
