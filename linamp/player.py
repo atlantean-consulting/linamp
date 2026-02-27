@@ -143,6 +143,14 @@ class AudioPlayer:
         return meta.get("icy-title", "")
 
     @property
+    def media_title(self) -> str:
+        """Get mpv's synthesized media title (incorporates stream metadata)."""
+        try:
+            return self._mpv.media_title or ""
+        except Exception:
+            return ""
+
+    @property
     def time_pos(self) -> float | None:
         if self._stopped:
             return None

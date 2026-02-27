@@ -21,14 +21,15 @@ python -m linamp
 2. **Browser View** — MC-style dual pane: folder/station tree (left) + flat play queue (right) + now-playing bar + command hints (bottom)
 
 ### Key modules
-- `linamp/app.py` — Main Textual App. Owns `AudioPlayer` singleton (`self.audio`) and `self.library` (list of `Folder`). Manages modes via `MODES` dict + `DEFAULT_MODE`. Polls player state every 500ms via `set_interval`. `flat_stations` property flattens library for playlist panels. Handles `LibraryChanged` by saving to disk and re-broadcasting to sibling `PlaylistPanel` widgets (Textual messages only bubble up, not sideways).
-- `linamp/player.py` — mpv wrapper. Critical flags: `video=False, terminal=False, input_terminal=False, ytdl_format="bestaudio/best"`. URL resolution pipeline: YouTube URLs pass directly to mpv's ytdl hook (avoids expired signed URLs); direct stream URLs (containing "ice", "stream", ".mp3", etc.) skip resolution; other URLs try yt-dlp extraction with 15s timeout, falling back to raw URL. `_is_ytdl_url()` classmethod identifies YouTube domains. `YTDL_DOMAINS` tuple lists recognized domains.
+- `linamp/app.py` — Main Textual App. Owns `AudioPlayer` singleton (`self.audio`) and `self.library` (list of `Folder`). Manages modes via `MODES` dict + `DEFAULT_MODE`. Polls player state every 500ms via `set_interval`, broadcasting `PlayerStateUpdate` to each widget individually via `screen.walk_children()` (creating a fresh message per widget to avoid Textual's stop-propagation). `flat_stations` property flattens library for playlist panels. Handles `LibraryChanged` by saving to disk and re-broadcasting to sibling `PlaylistPanel` widgets (Textual messages only bubble up, not sideways).
+- `linamp/player.py` — mpv wrapper. Critical flags: `video=False, terminal=False, input_terminal=False, ytdl_format="bestaudio/best"`. Properties: `icy_title` (ICY stream metadata), `media_title` (mpv's synthesized title incorporating stream metadata), `metadata` (raw dict). URL resolution pipeline: YouTube URLs pass directly to mpv's ytdl hook (avoids expired signed URLs); direct stream URLs (containing "ice", "stream", ".mp3", etc.) skip resolution; other URLs try yt-dlp extraction with 15s timeout, falling back to raw URL. `_is_ytdl_url()` classmethod identifies YouTube domains. `YTDL_DOMAINS` tuple lists recognized domains.
 - `linamp/stations.py` — `Station` dataclass (name, url, genre) + `Folder` dataclass (name, stations). `load_library()` reads `~/.config/linamp/stations.json` with auto-migration from old flat format. `save_library()` writes folder structure. `all_stations()` helper flattens folders. `_migrate_flat_list()` auto-categorizes stations into Radio/YouTube folders based on URL. Legacy `load_stations()`/`save_stations()`/`STATIONS` aliases kept for backwards compat.
-- `linamp/messages.py` — `PlayerStateUpdate` (broadcast by poll timer), `StationSelected` (from UI interaction), `LibraryChanged` (from station management CRUD, carries `list[Folder]`).
+- `linamp/messages.py` — `PlayerStateUpdate` (broadcast by poll timer, carries `icy_title`, `media_title`, and other state), `StationSelected` (from UI interaction), `LibraryChanged` (from station management CRUD, carries `list[Folder]`).
 - `linamp/screens/player_view.py` — PlayerView screen. Passes `self.app.flat_stations` to PlaylistPanel.
 - `linamp/screens/browser_view.py` — BrowserView screen with `NowPlayingBar` (now-playing status), `CommandHints` (MC-style key hints using Rich markup), and dual-pane layout. Passes `self.app.library` to StationList and `self.app.flat_stations` to PlaylistPanel.
 - `linamp/widgets/station_list.py` — Left pane browser. Uses Textual `Tree` widget (not ListView) with folder nodes (📁) and station leaves (📻 for radio, 🎵 for YouTube). Full CRUD: add/delete/rename/edit stations and folders, move stations within folders. Inline `Input` widgets for editing. YouTube URL auto-detection: fetches title via yt-dlp in background thread (`asyncio.to_thread`), auto-fills name and genre. Add flow is URL-first to enable auto-detection. Delete requires double-press confirmation.
 - `linamp/widgets/playlist_panel.py` — Right pane flat play queue. Shows all stations across all folders. Highlights active station with ▶ icon. Handles `LibraryChanged` to rebuild list (must `await lv.clear()` before appending — see Textual notes).
+- `linamp/widgets/track_info.py` — Standalone now-playing widget (not currently wired into any view). Shows "NOW PLAYING" label + track title with metadata priority: ICY title > media title > station name.
 - `linamp/widgets/transport.py` — Transport controls using `Static` widgets with `border: round` (not Textual `Button` which has pseudo-3D styling that clashes with box-drawing UI).
 - `linamp/widgets/` — All widgets extend `Container` (not `Widget`) because Textual 8.0 requires container semantics for widgets that compose children.
 
@@ -37,6 +38,13 @@ python -m linamp
 - **Format**: `{"folders": [{"name": "Radio", "stations": [{"name": "...", "url": "...", "genre": "..."}]}]}`
 - **Migration**: Old flat format `[{"name": "...", "url": "...", "genre": "..."}]` auto-detected and migrated on first load, splitting stations into Radio/YouTube folders based on URL domain.
 - **Defaults**: If no JSON file exists, `DEFAULT_LIBRARY` provides 8 radio stations in a Radio folder and an empty YouTube folder.
+
+### Stream metadata priority
+All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this priority:
+1. **ICY title** (`icy-title` from stream metadata) — real-time artist/track embedded by radio streams (e.g., `"Green Day - When I Come Around"`)
+2. **mpv media title** (`media_title`) — mpv's synthesized title from ytdl or stream metadata, used only if it differs from the station name
+3. **Station genre** — static genre field from station config
+4. **Station name** — final fallback
 
 ### URL resolution pipeline (in `AudioPlayer._resolve_url`)
 1. **YouTube/ytdl domains** → pass through to mpv (mpv's ytdl hook handles extraction internally, avoiding expired signed URLs)
@@ -51,7 +59,9 @@ python -m linamp
 - `ListView.clear()` is **async** — returns `AwaitRemove`. You MUST `await lv.clear()` before appending new items with the same IDs, otherwise you get `DuplicateIds` errors. Same applies to any widget removal followed by re-adding widgets with the same IDs.
 - When dynamically building widget trees (e.g., a `Vertical` with `Input` children), pass children to the constructor — do NOT call `form.mount(child)` before the form itself is mounted. Use `await self.mount(form)` then access children.
 - Textual messages bubble **up** the DOM tree only (child → parent → app). Sibling widgets do NOT receive each other's messages. To propagate to siblings, handle at the App level and explicitly call methods on siblings (e.g., `panel.on_library_changed(event)`).
+- `post_message()` reuses the same Message object. After the first recipient processes it and it bubbles up, Textual may set `_stop_propagation`, silently blocking delivery to subsequent recipients. When broadcasting to multiple widgets, create a **fresh Message instance per widget**.
 - `$text-muted` and `$text-disabled` are NOT valid Textual CSS color variables for border colors. Use hex colors instead (e.g., `#585b70`).
+- CSS `height` includes borders. A widget with `border: round` and `height: 3` has only 1 row of content (border-top + content + border-bottom). For 2 lines of content with a border, use `height: 4`.
 - Action methods can be `async def` — Textual will await them automatically.
 
 ## Keybindings

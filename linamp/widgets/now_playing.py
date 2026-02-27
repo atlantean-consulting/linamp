@@ -10,7 +10,7 @@ class NowPlaying(Container):
 
     DEFAULT_CSS = """
     NowPlaying {
-        height: 3;
+        height: 4;
         border: heavy $accent;
         padding: 0 1;
     }
@@ -35,8 +35,11 @@ class NowPlaying(Container):
             title.update(f"▶ {event.station.name}" if event.is_playing else
                          f"⏸ {event.station.name}" if event.is_paused else
                          event.station.name)
+            # Prefer ICY title (real-time artist/track), then media title, then genre
             if event.icy_title:
                 meta.update(event.icy_title)
+            elif event.media_title and event.media_title != event.station.name:
+                meta.update(event.media_title)
             elif event.station.genre:
                 meta.update(event.station.genre)
             else:

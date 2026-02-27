@@ -56,17 +56,25 @@ class LinampApp(App):
         yield Footer()
 
     def _poll_player_state(self) -> None:
-        msg = PlayerStateUpdate(
+        state = dict(
             is_playing=self.audio.is_playing,
             is_paused=self.audio.is_paused,
             is_stopped=self.audio.is_stopped,
             station=self.audio.current_station,
             icy_title=self.audio.icy_title,
+            media_title=self.audio.media_title,
             time_pos=self.audio.time_pos,
             volume=self.audio.volume,
         )
+        # Broadcast to all widgets that handle PlayerStateUpdate.
+        # post_message only reaches the target + ancestors (bubbles up),
+        # so we must create a fresh message per widget to avoid
+        # stop-propagation from a prior recipient killing delivery.
         if self.screen:
-            self.screen.post_message(msg)
+            for widget in self.screen.walk_children():
+                handler = getattr(widget, "on_player_state_update", None)
+                if handler is not None:
+                    widget.post_message(PlayerStateUpdate(**state))
 
     def action_toggle_view(self) -> None:
         if self.current_mode == "player":

@@ -22,11 +22,18 @@ class NowPlayingBar(Static):
     """
 
     def on_player_state_update(self, event: PlayerStateUpdate) -> None:
-        if event.station and event.is_playing:
-            title = event.icy_title or event.station.genre
-            self.update(f"▶ {event.station.name}  ·  {title}")
-        elif event.station and event.is_paused:
-            self.update(f"⏸ {event.station.name}")
+        if event.station and (event.is_playing or event.is_paused):
+            icon = "▶" if event.is_playing else "⏸"
+            # Prefer ICY title (real-time artist/track), then media title, then genre
+            detail = event.icy_title
+            if not detail and event.media_title and event.media_title != event.station.name:
+                detail = event.media_title
+            if not detail:
+                detail = event.station.genre
+            if detail:
+                self.update(f"{icon} {event.station.name}  ·  {detail}")
+            else:
+                self.update(f"{icon} {event.station.name}")
         else:
             self.update("■ Stopped")
 

@@ -15,6 +15,7 @@ class PlayerStateUpdate(Message):
         is_stopped: bool,
         station: Station | None,
         icy_title: str,
+        media_title: str,
         time_pos: float | None,
         volume: float,
     ) -> None:
@@ -24,6 +25,7 @@ class PlayerStateUpdate(Message):
         self.is_stopped = is_stopped
         self.station = station
         self.icy_title = icy_title
+        self.media_title = media_title
         self.time_pos = time_pos
         self.volume = volume
 
