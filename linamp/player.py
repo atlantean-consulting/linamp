@@ -55,6 +55,9 @@ class AudioPlayer:
         YouTube URLs are passed through directly — mpv's ytdl hook handles
         them better than pre-resolved temporary URLs that expire quickly.
         """
+        # Local file paths — mpv handles these natively
+        if url.startswith("/"):
+            return url
         # Let mpv's ytdl hook handle known video platforms directly
         if cls._is_ytdl_url(url):
             return url

@@ -6,35 +6,46 @@ Terminal music player — the love child of Winamp and Midnight Commander.
 - **Python 3.11+** with **Textual 8.0** (TUI framework)
 - **mpv** via **python-mpv** (audio backend)
 - **yt-dlp** (YouTube and web stream extraction)
+- **mutagen** (audio metadata read/write — MP3/FLAC/M4A/OGG tags)
 - System dependency: `sudo apt install mpv libmpv-dev` (libmpv2)
 
 ## Running
 ```bash
 pip install -r requirements.txt
-python -m linamp
+python -m linamp              # Player + radio browser
+python -m linamp --library    # Standalone library manager
+python -m linamp.library      # Standalone library manager (direct)
 ```
 
 ## Architecture
 
-### Two views (toggle with Tab)
-1. **Player View** (default) — Winamp-style compact player: now-playing, progress bar, transport controls, volume, visualizer, playlist
-2. **Browser View** — MC-style dual pane: folder/station tree (left) + flat play queue (right) + now-playing bar + command hints (bottom)
+### Two apps
+1. **LinampApp** (`linamp/app.py`) — Player + radio browser. Two views toggled with Tab:
+   - **Player View** (default) — Winamp-style compact player: now-playing, progress bar, transport controls, volume, visualizer, playlist
+   - **Browser View** — MC-style dual pane: folder/station tree (left) + flat play queue (right) + now-playing bar + command hints (bottom)
+2. **LibraryApp** (`linamp/library.py`) — Standalone local music library manager. MC-style dual pane: directory tree filtered to audio files (left) + file info placeholder (right). Launched via `python -m linamp.library`, `python -m linamp --library`, or F5 from within LinampApp (suspends TUI, audio keeps playing).
 
 ### Key modules
-- `linamp/app.py` — Main Textual App. Owns `AudioPlayer` singleton (`self.audio`) and `self.library` (list of `Folder`). Manages modes via `MODES` dict + `DEFAULT_MODE`. Polls player state every 500ms via `set_interval`, broadcasting `PlayerStateUpdate` to each widget individually via `screen.walk_children()` (creating a fresh message per widget to avoid Textual's stop-propagation). `flat_stations` property flattens library for playlist panels. Handles `LibraryChanged` by saving to disk and re-broadcasting to sibling `PlaylistPanel` widgets (Textual messages only bubble up, not sideways).
-- `linamp/player.py` — mpv wrapper. Critical flags: `video=False, terminal=False, input_terminal=False, ytdl_format="bestaudio/best"`. Properties: `icy_title` (ICY stream metadata), `media_title` (mpv's synthesized title incorporating stream metadata), `metadata` (raw dict). URL resolution pipeline: YouTube URLs pass directly to mpv's ytdl hook (avoids expired signed URLs); direct stream URLs (containing "ice", "stream", ".mp3", etc.) skip resolution; other URLs try yt-dlp extraction with 15s timeout, falling back to raw URL. `_is_ytdl_url()` classmethod identifies YouTube domains. `YTDL_DOMAINS` tuple lists recognized domains.
+- `linamp/app.py` — Main Textual App (player + radio browser). Owns `AudioPlayer` singleton (`self.audio`), `self.config` (`AppConfig`), and `self.library` (list of `Folder`). Manages modes via `MODES` dict + `DEFAULT_MODE`. Polls player state every 500ms via `set_interval`, broadcasting `PlayerStateUpdate` to each widget individually via `screen.walk_children()` (creating a fresh message per widget to avoid Textual's stop-propagation). `flat_stations` property flattens library for playlist panels. Handles `LibraryChanged` by saving to disk and re-broadcasting to sibling `PlaylistPanel` widgets (Textual messages only bubble up, not sideways). F5 binding suspends TUI and launches library manager as subprocess (`subprocess.run` + `self.suspend()`); audio playback continues via mpv.
+- `linamp/library.py` — Standalone library manager Textual App. Loads `AppConfig` for `music_root`. Single mode: `LibraryView`. Entry point: `main()`. Shares config, widgets, and CSS theme with LinampApp.
+- `linamp/config.py` — `AppConfig` dataclass (`music_root` field, default `~/Music`) + `load_config()`/`save_config()`. Persisted at `~/.config/linamp/config.json`.
+- `linamp/player.py` — mpv wrapper. Critical flags: `video=False, terminal=False, input_terminal=False, ytdl_format="bestaudio/best"`. Properties: `icy_title` (ICY stream metadata), `media_title` (mpv's synthesized title incorporating stream metadata), `metadata` (raw dict). URL resolution pipeline: local file paths (starting with `/`) pass through directly; YouTube URLs pass to mpv's ytdl hook; direct stream URLs skip resolution; other URLs try yt-dlp extraction. `_is_ytdl_url()` classmethod identifies YouTube domains. `YTDL_DOMAINS` tuple lists recognized domains.
 - `linamp/stations.py` — `Station` dataclass (name, url, genre) + `Folder` dataclass (name, stations). `load_library()` reads `~/.config/linamp/stations.json` with auto-migration from old flat format. `save_library()` writes folder structure. `all_stations()` helper flattens folders. `_migrate_flat_list()` auto-categorizes stations into Radio/YouTube folders based on URL. Legacy `load_stations()`/`save_stations()`/`STATIONS` aliases kept for backwards compat.
 - `linamp/messages.py` — `PlayerStateUpdate` (broadcast by poll timer, carries `icy_title`, `media_title`, and other state), `StationSelected` (from UI interaction), `LibraryChanged` (from station management CRUD, carries `list[Folder]`).
 - `linamp/screens/player_view.py` — PlayerView screen. Passes `self.app.flat_stations` to PlaylistPanel.
-- `linamp/screens/browser_view.py` — BrowserView screen with `NowPlayingBar` (now-playing status), `CommandHints` (MC-style key hints using Rich markup), and dual-pane layout. Passes `self.app.library` to StationList and `self.app.flat_stations` to PlaylistPanel.
+- `linamp/screens/browser_view.py` — BrowserView screen with `CommandHints` (MC-style key hints using Rich markup) and dual-pane layout. Passes `self.app.library` to StationList and `self.app.flat_stations` to PlaylistPanel. Uses shared `NowPlayingBar` from widgets.
+- `linamp/screens/library_view.py` — LibraryView screen for the standalone library manager. Dual-pane: `FileBrowser` (left) + file info placeholder (right) + `NowPlayingBar` + `LibraryCommandHints`.
 - `linamp/widgets/station_list.py` — Left pane browser. Uses Textual `Tree` widget (not ListView) with folder nodes (📁) and station leaves (📻 for radio, 🎵 for YouTube). Full CRUD: add/delete/rename/edit stations and folders, move stations within folders. Inline `Input` widgets for editing. YouTube URL auto-detection: fetches title via yt-dlp in background thread (`asyncio.to_thread`), auto-fills name and genre. Add flow is URL-first to enable auto-detection. Delete requires double-press confirmation.
 - `linamp/widgets/playlist_panel.py` — Right pane flat play queue. Shows all stations across all folders. Highlights active station with ▶ icon. Handles `LibraryChanged` to rebuild list (must `await lv.clear()` before appending — see Textual notes).
+- `linamp/widgets/now_playing_bar.py` — Shared `NowPlayingBar` widget (compact 1-line status bar with metadata priority). Used by both BrowserView and LibraryView.
+- `linamp/widgets/file_browser.py` — `AudioDirectoryTree` (Textual `DirectoryTree` subclass filtered to audio extensions: .mp3, .flac, .m4a, .ogg, .opus, .wav, .aac, .wma) + `FileBrowser` container wrapper. Posts `StationSelected` on Enter with `Station(url=file_path)`.
 - `linamp/widgets/track_info.py` — Standalone now-playing widget (not currently wired into any view). Shows "NOW PLAYING" label + track title with metadata priority: ICY title > media title > station name.
 - `linamp/widgets/transport.py` — Transport controls using `Static` widgets with `border: round` (not Textual `Button` which has pseudo-3D styling that clashes with box-drawing UI).
 - `linamp/widgets/` — All widgets extend `Container` (not `Widget`) because Textual 8.0 requires container semantics for widgets that compose children.
 
 ### Data persistence
-- **Path**: `~/.config/linamp/stations.json`
+- **Config**: `~/.config/linamp/config.json` — `{"music_root": "~/Music"}`. Loaded by both apps.
+- **Stations**: `~/.config/linamp/stations.json`
 - **Format**: `{"folders": [{"name": "Radio", "stations": [{"name": "...", "url": "...", "genre": "..."}]}]}`
 - **Migration**: Old flat format `[{"name": "...", "url": "...", "genre": "..."}]` auto-detected and migrated on first load, splitting stations into Radio/YouTube folders based on URL domain.
 - **Defaults**: If no JSON file exists, `DEFAULT_LIBRARY` provides 8 radio stations in a Radio folder and an empty YouTube folder.
@@ -47,10 +58,11 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 4. **Station name** — final fallback
 
 ### URL resolution pipeline (in `AudioPlayer._resolve_url`)
-1. **YouTube/ytdl domains** → pass through to mpv (mpv's ytdl hook handles extraction internally, avoiding expired signed URLs)
-2. **Direct streams** (URL contains "ice", "stream", ".mp3", ".aac", ".ogg", ".m3u", ".pls") → pass through to mpv
-3. **Other URLs** → try `yt-dlp --no-download --print urls -f bestaudio/best` with 15s timeout → use extracted URL if successful
-4. **Fallback** → pass raw URL to mpv
+1. **Local file paths** (starts with `/`) → pass through to mpv directly
+2. **YouTube/ytdl domains** → pass through to mpv (mpv's ytdl hook handles extraction internally, avoiding expired signed URLs)
+3. **Direct streams** (URL contains "ice", "stream", ".mp3", ".aac", ".ogg", ".m3u", ".pls") → pass through to mpv
+4. **Other URLs** → try `yt-dlp --no-download --print urls -f bestaudio/best` with 15s timeout → use extracted URL if successful
+5. **Fallback** → pass raw URL to mpv
 
 ### Important Textual 8.0 notes
 - Do NOT use `Widget` as base class for widgets that `compose()` children — use `Container`. Textual 8.0 calls `render()` on non-container Widgets which returns `css_identifier_styled` instead of delegating to children, causing `AttributeError: 'str' object has no attribute 'render_strips'`.
@@ -74,6 +86,7 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 | s | Stop |
 | +/= | Volume up |
 | - | Volume down |
+| F5 | Open library manager (suspends TUI, audio keeps playing) |
 | q | Quit |
 
 ### Browser view (left pane focused)
@@ -90,10 +103,17 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 | Ctrl+Down | Move station down within folder |
 | Escape | Cancel edit in progress |
 
+### Library manager keybindings
+| Key | Action |
+|-----|--------|
+| Enter | Play selected file |
+| Up/Down | Navigate directory tree |
+| q | Quit library manager (returns to player if launched via F5) |
+
 ## Phase Roadmap
 1. **Internet Radio** ✅ (Phase 1) — 8 default stations, streaming via mpv
 2. **Station Management + YouTube** ✅ (Phase 1.5) — CRUD, folder tree, persistence, yt-dlp integration
-3. **Local Library** — Browse/play local music collection (user plans 150GB+ collection)
+3. **Local Library** 🚧 (Phase 3, in progress) — Standalone library manager app with audio directory browsing. Next: metadata display panel (mutagen), inline tag editing, next/prev track, config editing.
 4. **Apple Music** — TBD, DRM challenges
 
 ## Stations
@@ -108,7 +128,8 @@ Stream URLs are persisted in `~/.config/linamp/stations.json`. Notable confirmed
 ## Dev Notes
 - Visualizer is simulated (random bars that pulse during playback). Real FFT from mpv is complex — deferred to later phase.
 - Player state is polled (500ms interval) rather than using mpv property observer callbacks, to avoid threading issues between mpv threads and Textual's asyncio loop.
-- `AudioPlayer` is a singleton on the App, accessed via `self.app.audio` from screens/widgets.
+- `AudioPlayer` is a singleton on LinampApp, accessed via `self.app.audio` from screens/widgets. LibraryApp does not have an AudioPlayer (it's a management tool, not a player).
+- **mutagen** is included as a dependency for upcoming metadata read/write support (Phase 3 milestone 2).
 - Transport buttons use `Static` + `border: round` instead of `Button` to match the box-drawing aesthetic of the rest of the UI.
 - yt-dlp must be kept up to date — YouTube frequently changes their streaming format. An outdated yt-dlp will fail with HTTP 403 errors. The version that ships with pip may be stale; run `pip install --upgrade yt-dlp` if YouTube playback breaks.
 - When finding radio stream URLs: check the station's FAQ/audio help page, look for StreamGuys/Triton/SecureNet patterns, probe mount point variants (e.g., `/wext1`, `/wmht1`). HTTP 200 with `content-type: audio/*` confirms a working stream.

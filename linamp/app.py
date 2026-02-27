@@ -2,6 +2,10 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import Footer
 
+import subprocess
+import sys
+
+from linamp.config import load_config
 from linamp.messages import PlayerStateUpdate, StationSelected, LibraryChanged
 from linamp.player import AudioPlayer
 from linamp.stations import load_library, save_library, all_stations
@@ -20,6 +24,7 @@ class LinampApp(App):
         Binding("s", "stop", "Stop", priority=True),
         Binding("plus,equal", "volume_up", "Vol+", priority=True),
         Binding("minus", "volume_down", "Vol-", priority=True),
+        Binding("f5", "open_library", "Library", priority=True),
         Binding("q", "quit", "Quit", priority=True),
     ]
 
@@ -43,6 +48,7 @@ class LinampApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.audio = AudioPlayer()
+        self.config = load_config()
         self.library = load_library()
 
     @property
@@ -81,6 +87,14 @@ class LinampApp(App):
             self.switch_mode("browser")
         else:
             self.switch_mode("player")
+
+    def action_open_library(self) -> None:
+        """Suspend TUI and launch the library manager as a subprocess.
+
+        Audio playback continues — mpv runs independently of the TUI.
+        """
+        with self.suspend():
+            subprocess.run([sys.executable, "-m", "linamp.library"])
 
     def action_toggle_pause(self) -> None:
         self.audio.toggle_pause()

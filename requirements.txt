@@ -1,3 +1,4 @@
 textual>=0.89.0
 python-mpv>=1.0.7
 yt-dlp>=2024.0
+mutagen>=1.47

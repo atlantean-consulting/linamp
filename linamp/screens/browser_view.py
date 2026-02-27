@@ -3,39 +3,9 @@ from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Static
 
-from linamp.messages import PlayerStateUpdate
+from linamp.widgets.now_playing_bar import NowPlayingBar
 from linamp.widgets.station_list import StationList
 from linamp.widgets.playlist_panel import PlaylistPanel
-
-
-class NowPlayingBar(Static):
-    """Compact now-playing status bar for browser view."""
-
-    DEFAULT_CSS = """
-    NowPlayingBar {
-        height: 1;
-        dock: bottom;
-        background: $accent;
-        color: $text;
-        padding: 0 1;
-    }
-    """
-
-    def on_player_state_update(self, event: PlayerStateUpdate) -> None:
-        if event.station and (event.is_playing or event.is_paused):
-            icon = "▶" if event.is_playing else "⏸"
-            # Prefer ICY title (real-time artist/track), then media title, then genre
-            detail = event.icy_title
-            if not detail and event.media_title and event.media_title != event.station.name:
-                detail = event.media_title
-            if not detail:
-                detail = event.station.genre
-            if detail:
-                self.update(f"{icon} {event.station.name}  ·  {detail}")
-            else:
-                self.update(f"{icon} {event.station.name}")
-        else:
-            self.update("■ Stopped")
 
 
 class CommandHints(Static):

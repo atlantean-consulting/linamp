@@ -7,10 +7,12 @@ dependencies = [
     "textual>=0.89.0",
     "python-mpv>=1.0.7",
     "yt-dlp>=2024.0",
+    "mutagen>=1.47",
 ]
 
 [project.scripts]
 linamp = "linamp.__main__:main"
+linamp-library = "linamp.library:main"
 
 [build-system]
 requires = ["hatchling"]
