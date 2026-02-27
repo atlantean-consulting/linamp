@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widgets import Static
@@ -27,6 +28,7 @@ class LibraryCommandHints(Static):
     def __init__(self) -> None:
         hints = (
             "[b #f9e2af]Enter[/] Play  "
+            "[b #f9e2af]e[/] Edit tags  "
             "[b #f9e2af]Tab[/] Player  "
             "[b #f9e2af]F5[/] Library  "
             "[b #f9e2af]q[/] Quit"
@@ -37,6 +39,10 @@ class LibraryCommandHints(Static):
 class LibraryView(Screen):
     """Local music library browser — MC-style dual pane."""
 
+    BINDINGS = [
+        Binding("e", "edit_tags", "Edit tags", priority=True),
+    ]
+
     DEFAULT_CSS = """
     LibraryView {
         layout: vertical;
@@ -45,6 +51,10 @@ class LibraryView(Screen):
         height: 1fr;
     }
     """
+
+    async def action_edit_tags(self) -> None:
+        """Delegate edit to the metadata panel."""
+        await self.query_one(MetadataPanel).action_edit()
 
     def compose(self) -> ComposeResult:
         root = Path(self.app.config.music_root).expanduser()

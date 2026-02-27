@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from mutagen import File
-from mutagen.id3 import ID3
+from mutagen.id3 import ID3, TIT2, TPE1, TALB, TCON, TDRC, TRCK
 from mutagen.mp3 import MP3
 from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
@@ -139,3 +139,80 @@ def read_metadata(filepath: str) -> dict:
         pass  # Return whatever we have so far
 
     return result
+
+
+# Mapping from normalized tag names to format-specific keys
+_EDITABLE_FIELDS = ("title", "artist", "album", "track", "year", "genre")
+
+# ID3 frame constructors keyed by normalized name
+_ID3_FRAMES = {
+    "title": TIT2,
+    "artist": TPE1,
+    "album": TALB,
+    "genre": TCON,
+    "year": TDRC,
+    "track": TRCK,
+}
+
+# MP4 atom keys
+_MP4_KEYS = {
+    "title": "\xa9nam",
+    "artist": "\xa9ART",
+    "album": "\xa9alb",
+    "genre": "\xa9gen",
+    "year": "\xa9day",
+}
+
+# Vorbis comment keys (FLAC, OGG)
+_VORBIS_KEYS = {
+    "title": "title",
+    "artist": "artist",
+    "album": "album",
+    "genre": "genre",
+    "year": "date",
+    "track": "tracknumber",
+}
+
+
+def write_metadata(filepath: str, tags: dict) -> None:
+    """Write tag values back to an audio file.
+
+    tags should be a dict with any subset of: title, artist, album, track, year, genre.
+    Only keys present in the dict are written. Raises on failure.
+    """
+    audio = File(filepath)
+    if audio is None:
+        raise ValueError(f"Cannot open audio file: {filepath}")
+
+    if isinstance(audio, MP3):
+        if audio.tags is None:
+            audio.add_tags()
+        for key, value in tags.items():
+            if key in _ID3_FRAMES:
+                audio.tags[_ID3_FRAMES[key].__name__] = _ID3_FRAMES[key](
+                    encoding=3, text=[value]
+                )
+    elif isinstance(audio, MP4):
+        if audio.tags is None:
+            audio.add_tags()
+        for key, value in tags.items():
+            if key == "track":
+                # MP4 track is a tuple (track_num, total)
+                try:
+                    num = int(value) if value else 0
+                    audio.tags["trkn"] = [(num, 0)]
+                except ValueError:
+                    pass
+            elif key in _MP4_KEYS:
+                audio.tags[_MP4_KEYS[key]] = [value]
+    elif isinstance(audio, (FLAC, OggVorbis)):
+        for key, value in tags.items():
+            if key in _VORBIS_KEYS:
+                audio[_VORBIS_KEYS[key]] = [value]
+    else:
+        # Generic fallback — try Vorbis-style keys
+        for key, value in tags.items():
+            if key in _VORBIS_KEYS:
+                audio[_VORBIS_KEYS[key]] = [value]
+
+    audio.save()
