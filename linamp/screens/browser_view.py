@@ -60,6 +60,6 @@ class BrowserView(Screen):
     def compose(self) -> ComposeResult:
         with Horizontal():
             yield StationList(library=self.app.library)
-            yield PlaylistPanel(stations=self.app.flat_stations)
+            yield PlaylistPanel(stations=self.app.active_playlist)
         yield NowPlayingBar("■ Stopped")
         yield CommandHints()

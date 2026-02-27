@@ -7,6 +7,7 @@ from linamp.widgets.transport import TransportControls
 from linamp.widgets.volume_bar import VolumeBar
 from linamp.widgets.visualizer import Visualizer
 from linamp.widgets.playlist_panel import PlaylistPanel
+from linamp.widgets.playlist_mode_indicator import PlaylistModeIndicator
 
 
 class PlayerView(Screen):
@@ -24,4 +25,5 @@ class PlayerView(Screen):
         yield TransportControls()
         yield VolumeBar()
         yield Visualizer()
-        yield PlaylistPanel(stations=self.app.flat_stations)
+        yield PlaylistModeIndicator(mode=self.app.playlist_mode)
+        yield PlaylistPanel(stations=self.app.active_playlist)

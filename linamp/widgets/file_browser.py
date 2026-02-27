@@ -54,12 +54,10 @@ class FileBrowser(Container):
         else:
             self.post_message(FileHighlighted(None))
 
-    def on_tree_node_selected(self, event: DirectoryTree.NodeSelected) -> None:
-        """Handle Enter on tree nodes — play audio files, let dirs expand normally."""
-        if event.node.data is None:
-            return
-        path = event.node.data.path
-        if path.is_file() and path.suffix.lower() in AUDIO_EXTENSIONS:
+    def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
+        """Handle Enter on a file node — queue/play the audio file."""
+        path = event.path
+        if path.suffix.lower() in AUDIO_EXTENSIONS:
             station = Station(
                 name=path.stem,
                 url=str(path),

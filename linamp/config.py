@@ -9,6 +9,7 @@ log = logging.getLogger(__name__)
 
 CONFIG_DIR = Path.home() / ".config" / "linamp"
 CONFIG_PATH = CONFIG_DIR / "config.json"
+QUEUE_PATH = CONFIG_DIR / "queue.json"
 
 
 @dataclass

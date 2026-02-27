@@ -74,11 +74,15 @@ class PlaylistPanel(Container):
 
             self._active_index = new_index
 
-    async def on_library_changed(self, event: LibraryChanged) -> None:
-        self._stations = all_stations(event.folders)
+    async def set_stations(self, stations: list[Station]) -> None:
+        """Replace the playlist with a new station list."""
+        self._stations = list(stations)
         self._active_index = None
         lv = self.query_one(ListView)
         await lv.clear()
         for i, station in enumerate(self._stations):
             label = Label(f"  {station.name} [{station.genre}]")
             lv.append(ListItem(label, id=f"station-{i}"))
+
+    async def on_library_changed(self, event: LibraryChanged) -> None:
+        await self.set_stations(all_stations(event.folders))

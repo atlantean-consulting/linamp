@@ -48,6 +48,15 @@ class FileHighlighted(Message):
         self.path = path
 
 
+class PlaylistModeChanged(Message):
+    """Playlist mode switched between radio and local."""
+
+    def __init__(self, mode: str, stations: list[Station]) -> None:
+        super().__init__()
+        self.mode = mode
+        self.stations = stations
+
+
 class LibraryChanged(Message):
     """Library was modified (folders/stations added/removed/renamed/rearranged)."""
 
