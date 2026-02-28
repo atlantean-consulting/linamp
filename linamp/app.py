@@ -73,6 +73,14 @@ class LinampApp(App):
         yield Footer()
 
     def _poll_player_state(self) -> None:
+        # Auto-advance: if track ended naturally (not user-stopped), play next
+        if (
+            not self.audio.is_stopped
+            and self.audio.idle_active
+            and self.audio.current_station is not None
+        ):
+            self._play_next_track()
+
         state = dict(
             is_playing=self.audio.is_playing,
             is_paused=self.audio.is_paused,
@@ -185,6 +193,24 @@ class LinampApp(App):
             handler = getattr(widget, "on_playlist_mode_changed", None)
             if handler is not None:
                 widget.post_message(PlaylistModeChanged(self.playlist_mode, stations))
+
+    def _play_next_track(self) -> None:
+        """Advance to the next track in the active playlist."""
+        playlist = self.active_playlist
+        if not playlist:
+            self.audio.stop()
+            return
+        current = self.audio.current_station
+        try:
+            idx = next(i for i, s in enumerate(playlist) if s.url == current.url)
+            next_idx = idx + 1
+        except (StopIteration, AttributeError):
+            next_idx = 0
+        if next_idx < len(playlist):
+            self.audio.play(playlist[next_idx])
+        else:
+            # Reached end of playlist
+            self.audio.stop()
 
     def on_station_selected(self, event: StationSelected) -> None:
         # Auto-add local files to the local queue

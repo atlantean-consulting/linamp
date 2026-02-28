@@ -154,6 +154,14 @@ class AudioPlayer:
             return ""
 
     @property
+    def idle_active(self) -> bool:
+        """True when mpv has no file loaded (track ended or never started)."""
+        try:
+            return bool(self._mpv.idle_active)
+        except Exception:
+            return True
+
+    @property
     def time_pos(self) -> float | None:
         if self._stopped:
             return None
