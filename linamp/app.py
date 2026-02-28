@@ -188,7 +188,12 @@ class LinampApp(App):
         # Update playlist panels
         for panel in self.query("PlaylistPanel"):
             await panel.set_stations(stations)
-        # Broadcast to mode indicators (fresh message per widget)
+        # Notify the screen itself (e.g. BrowserView swaps left pane)
+        msg = PlaylistModeChanged(self.playlist_mode, stations)
+        screen_handler = getattr(self.screen, "on_playlist_mode_changed", None)
+        if screen_handler is not None:
+            screen_handler(msg)
+        # Broadcast to child widgets (mode indicators etc.)
         for widget in self.screen.walk_children():
             handler = getattr(widget, "on_playlist_mode_changed", None)
             if handler is not None:
