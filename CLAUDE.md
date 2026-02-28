@@ -22,7 +22,7 @@ python -m linamp.library      # Standalone library manager (direct)
 ### Two apps
 1. **LinampApp** (`linamp/app.py`) — Player + radio browser. Two views toggled with Tab:
    - **Player View** (default) — Winamp-style compact player: now-playing, progress bar, transport controls, volume, visualizer, playlist
-   - **Browser View** — MC-style dual pane: folder/station tree (left) + flat play queue (right) + now-playing bar + command hints (bottom)
+   - **Browser View** — Mode-aware MC-style dual pane: in Radio mode shows StationList (left) + PlaylistPanel (right); in Local mode shows FileBrowser (left) + PlaylistPanel (right). Both panes are always mounted; visibility toggled via `display` on F1/F2. + now-playing bar + context-sensitive command hints (bottom)
 2. **LibraryApp** (`linamp/library.py`) — Standalone local music library manager. MC-style dual pane: directory tree filtered to audio files (left) + metadata panel (right, shows tags via mutagen with inline editing). Launched via `python -m linamp.library`, `python -m linamp --library`, or F5 from within LinampApp (suspends TUI, audio keeps playing).
 
 ### Key modules
@@ -33,8 +33,8 @@ python -m linamp.library      # Standalone library manager (direct)
 - `linamp/stations.py` — `Station` dataclass (name, url, genre) + `Folder` dataclass (name, stations). `load_library()` reads `~/.config/linamp/stations.json` with auto-migration from old flat format. `save_library()` writes folder structure. `all_stations()` helper flattens folders. `_migrate_flat_list()` auto-categorizes stations into Radio/YouTube folders based on URL. Legacy `load_stations()`/`save_stations()`/`STATIONS` aliases kept for backwards compat.
 - `linamp/metadata.py` — Audio metadata read/write via mutagen. `read_metadata(filepath)` returns normalized dict (title, artist, album, track, year, genre, duration, bitrate, sample_rate, format, file_size) across MP3/ID3, MP4, FLAC, OGG. `write_metadata(filepath, tags)` writes a subset of tags back using format-appropriate methods (ID3 frames for MP3, iTunes atoms for MP4, Vorbis comments for FLAC/OGG). Both handle format detection internally. `read_metadata` never raises; `write_metadata` raises on failure.
 - `linamp/messages.py` — `PlayerStateUpdate` (broadcast by poll timer, carries `icy_title`, `media_title`, and other state), `StationSelected` (from UI interaction), `FileHighlighted` (from FileBrowser cursor movement, carries `Path | None`), `PlaylistModeChanged` (carries `mode` and `stations` list when switching Radio/Local), `LibraryChanged` (from station management CRUD, carries `list[Folder]`).
-- `linamp/screens/player_view.py` — PlayerView screen. Passes `self.app.flat_stations` to PlaylistPanel.
-- `linamp/screens/browser_view.py` — BrowserView screen with `CommandHints` (MC-style key hints using Rich markup) and dual-pane layout. Passes `self.app.library` to StationList and `self.app.flat_stations` to PlaylistPanel. Uses shared `NowPlayingBar` from widgets.
+- `linamp/screens/player_view.py` — PlayerView screen. Passes `self.app.active_playlist` to PlaylistPanel. `on_screen_resume()` refreshes PlaylistPanel and PlaylistModeIndicator when Tab-returning from BrowserView.
+- `linamp/screens/browser_view.py` — Mode-aware BrowserView screen. Mounts both StationList and FileBrowser in left pane; toggles visibility via `display` based on playlist mode. `_sync_mode()` helper keeps pane visibility, hints, and focus in sync. `on_screen_resume()` refreshes playlist and pane state when Tab-returning. In local mode, `on_station_selected()` intercepts file selections to queue-only (no play, stops event propagation). `p` binding starts playback from queue beginning and switches to player view. `CommandHints` shows context-sensitive hints (radio CRUD vs local queue operations).
 - `linamp/screens/library_view.py` — LibraryView screen for the standalone library manager. Dual-pane: `FileBrowser` (left) + `MetadataPanel` (right) + `NowPlayingBar` + `LibraryCommandHints`. Handles `FileHighlighted` messages to update metadata panel on cursor movement. Owns the `e` binding for tag editing (at screen level with `priority=True` so it fires regardless of focus pane), delegating to `MetadataPanel.action_edit()`.
 - `linamp/widgets/station_list.py` — Left pane browser. Uses Textual `Tree` widget (not ListView) with folder nodes (📁) and station leaves (📻 for radio, 🎵 for YouTube). Full CRUD: add/delete/rename/edit stations and folders, move stations within folders. Inline `Input` widgets for editing. YouTube URL auto-detection: fetches title via yt-dlp in background thread (`asyncio.to_thread`), auto-fills name and genre. Add flow is URL-first to enable auto-detection. Delete requires double-press confirmation.
 - `linamp/widgets/playlist_panel.py` — Right pane flat play queue. Shows stations from the active playlist (radio or local). Highlights active station with ▶ icon. `set_stations(list)` swaps the playlist dynamically (used by mode switching). Handles `LibraryChanged` to rebuild list (must `await lv.clear()` before appending — see Textual notes).
@@ -82,6 +82,8 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 - Bindings on a widget only fire when that widget (or a descendant) has focus. For keybindings that should work regardless of which pane has focus, define the binding on the **Screen** (e.g., `LibraryView`) with `priority=True`, then delegate to the target widget's method.
 - Do NOT override `DirectoryTree`'s Enter key with a custom `Binding` on a parent container — it steals the keypress before the tree can expand/collapse folders. For reacting to file selection, use `on_directory_tree_file_selected` (catches `DirectoryTree.FileSelected`) — NOT `on_tree_node_selected` (which catches `Tree.NodeSelected` and doesn't reliably fire for DirectoryTree file leaf nodes).
 - Textual `Input` widgets need `height: 3` minimum to be visible (border + content + border). At `height: 1` with `border: none`, the text content area can be squeezed to zero, making typed text invisible. Set an explicit `color` on Input widgets — they may inherit a muted color that blends with the background.
+- Textual's mode system caches Screen instances — `compose()` runs only once. When switching modes (e.g., Tab toggle), the screen resumes but does NOT recompose. Use `on_screen_resume()` to refresh stale state (playlist contents, pane visibility, indicators) when a screen becomes active again. The `ScreenResume` event fires automatically on mode switch.
+- `_broadcast_mode_change()` broadcasts `PlaylistModeChanged` to child widgets via `screen.walk_children()`, but the **Screen itself** is not a child — it must be notified explicitly (e.g., `getattr(self.screen, "on_playlist_mode_changed", None)`).
 
 ## Keybindings
 
@@ -98,7 +100,7 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 | F5 | Open library manager (suspends TUI, audio keeps playing) |
 | q | Quit |
 
-### Browser view (left pane focused)
+### Browser view — Radio mode (left pane focused)
 | Key | Action |
 |-----|--------|
 | Enter | Play selected station / expand-collapse folder |
@@ -111,6 +113,13 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 | Ctrl+Up | Move station up within folder |
 | Ctrl+Down | Move station down within folder |
 | Escape | Cancel edit in progress |
+
+### Browser view — Local mode (left pane focused)
+| Key | Action |
+|-----|--------|
+| Enter | Add file to queue (without playing) / expand-collapse folder |
+| Up/Down | Navigate directory tree |
+| p | Play queue from beginning and switch to player view |
 
 ### Library manager keybindings
 | Key | Action |
