@@ -66,6 +66,18 @@ class LinampApp(App):
             return self.local_queue
         return self.flat_stations
 
+    # Actions that should be suppressed when BrowserView is in edit mode,
+    # so their keys can be handled by the screen's on_key() instead.
+    _EDIT_MODE_SUPPRESSED = {"stop", "volume_up", "volume_down", "toggle_pause"}
+
+    def check_action(self, action: str, parameters: tuple) -> bool | None:
+        """Suppress global actions that conflict with edit-mode key handling."""
+        if action in self._EDIT_MODE_SUPPRESSED:
+            screen = self.screen
+            if getattr(screen, "_edit_mode", False):
+                return False
+        return True
+
     def on_mount(self) -> None:
         self.set_interval(0.5, self._poll_player_state)
 

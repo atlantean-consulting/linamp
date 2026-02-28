@@ -84,5 +84,56 @@ class PlaylistPanel(Container):
             label = Label(f"  {station.name} [{station.genre}]")
             lv.append(ListItem(label, id=f"station-{i}"))
 
+    @property
+    def selected_index(self) -> int | None:
+        """Return the currently highlighted index in the ListView."""
+        lv = self.query_one(ListView)
+        idx = lv.index
+        if idx is not None and 0 <= idx < len(self._stations):
+            return idx
+        return None
+
+    @property
+    def stations(self) -> list[Station]:
+        """Return the current station list."""
+        return list(self._stations)
+
+    async def move_track(self, direction: int) -> None:
+        """Move the selected track up (direction=-1) or down (direction=1)."""
+        idx = self.selected_index
+        if idx is None:
+            return
+        new_idx = idx + direction
+        if new_idx < 0 or new_idx >= len(self._stations):
+            return
+        # Swap in the data list
+        self._stations[idx], self._stations[new_idx] = (
+            self._stations[new_idx],
+            self._stations[idx],
+        )
+        # Rebuild and re-select at new position
+        await self._rebuild_list(select_index=new_idx)
+
+    async def delete_track(self) -> None:
+        """Delete the currently selected track."""
+        idx = self.selected_index
+        if idx is None:
+            return
+        self._stations.pop(idx)
+        # Select the next item (or previous if at end)
+        new_idx = min(idx, len(self._stations) - 1) if self._stations else None
+        await self._rebuild_list(select_index=new_idx)
+
+    async def _rebuild_list(self, select_index: int | None = None) -> None:
+        """Rebuild the ListView from _stations and optionally select an index."""
+        self._active_index = None
+        lv = self.query_one(ListView)
+        await lv.clear()
+        for i, station in enumerate(self._stations):
+            label = Label(f"  {station.name} [{station.genre}]")
+            lv.append(ListItem(label, id=f"station-{i}"))
+        if select_index is not None and 0 <= select_index < len(self._stations):
+            lv.index = select_index
+
     async def on_library_changed(self, event: LibraryChanged) -> None:
         await self.set_stations(all_stations(event.folders))
