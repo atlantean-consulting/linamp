@@ -150,7 +150,7 @@ All now-playing displays (NowPlaying widget, NowPlayingBar in browser) use this 
 1. **Internet Radio** ✅ (Phase 1) — 8 default stations, streaming via mpv
 2. **Station Management + YouTube** ✅ (Phase 1.5) — CRUD, folder tree, persistence, yt-dlp integration
 3. **Local Library** 🚧 (Phase 3, in progress) — Standalone library manager with audio directory browsing, metadata display panel (mutagen), inline tag editing, and dual playlist modes (Radio/Local with F1/F2). Next: append-without-play in library browser, config editing.
-4. **Apple Music** — TBD, DRM challenges
+4. **Cross-Platform** — macOS + Windows support. Key areas: platform-appropriate config dirs (`~/.config` → `~/Library/Application Support/` / `%APPDATA%`), Windows path handling (local file detection uses `/` prefix), mpv installation instructions per platform.
 
 ## Stations
 Stream URLs are persisted in `~/.config/linamp/stations.json`. Notable confirmed-working streams:
