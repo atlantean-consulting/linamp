@@ -14,11 +14,16 @@ class Station:
 class Folder:
     name: str
     stations: list[Station] = field(default_factory=list)
+    channel_url: str = ""
+
+    @property
+    def is_channel(self) -> bool:
+        return bool(self.channel_url)
 
 
 def all_stations(folders: list[Folder]) -> list[Station]:
-    """Flatten a folder list into a single station list."""
-    return [s for f in folders for s in f.stations]
+    """Flatten a folder list into a single station list, excluding channel folders."""
+    return [s for f in folders if not f.is_channel for s in f.stations]
 
 
 DEFAULT_LIBRARY: list[Folder] = [
@@ -67,7 +72,7 @@ def load_library() -> list[Folder]:
                 folders = []
                 for fd in data["folders"]:
                     stations = [Station(**s) for s in fd.get("stations", [])]
-                    folders.append(Folder(fd["name"], stations))
+                    folders.append(Folder(fd["name"], stations, fd.get("channel_url", "")))
                 return folders
         except (json.JSONDecodeError, TypeError, KeyError):
             pass
@@ -80,7 +85,11 @@ def save_library(folders: list[Folder]) -> None:
     STATIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
     data = {
         "folders": [
-            {"name": f.name, "stations": [asdict(s) for s in f.stations]}
+            {
+                "name": f.name,
+                "stations": [asdict(s) for s in f.stations],
+                **({"channel_url": f.channel_url} if f.channel_url else {}),
+            }
             for f in folders
         ]
     }

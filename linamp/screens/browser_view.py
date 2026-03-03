@@ -18,6 +18,9 @@ from linamp.widgets.file_browser import FileBrowser
 RADIO_HINTS = (
     "[b #f9e2af]f[/] Folder  "
     "[b #f9e2af]a[/] Add  "
+    "[b #f9e2af]c[/] Channel  "
+    "[b #f9e2af]m[/] More  "
+    "[b #f9e2af]w[/] Save  "
     "[b #f9e2af]d[/] Delete  "
     "[b #f9e2af]r[/] Rename  "
     "[b #f9e2af]e[/] Edit  "

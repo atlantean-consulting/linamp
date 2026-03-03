@@ -18,9 +18,14 @@ log = logging.getLogger(__name__)
 class StationList(Container):
     """Station browser with folder tree for the MC-style left pane."""
 
+    CHANNEL_PAGE_SIZE = 25
+
     BINDINGS = [
         Binding("f", "new_folder", "Folder", priority=True),
         Binding("a", "add_station", "Add", priority=True),
+        Binding("c", "import_channel", "Channel", priority=True),
+        Binding("m", "load_more", "More", priority=True),
+        Binding("w", "save_to_library", "Save", priority=True),
         Binding("d", "delete_item", "Delete", priority=True),
         Binding("r", "rename_item", "Rename", priority=True),
         Binding("e", "edit_station", "Edit", priority=True),
@@ -69,11 +74,13 @@ class StationList(Container):
     MODE_EDIT = "edit"
     MODE_DELETE_CONFIRM = "delete_confirm"
     MODE_NEW_FOLDER = "new_folder"
+    MODE_IMPORT_CHANNEL = "import_channel"
 
     def __init__(self, library: list[Folder] | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._library = list(library or DEFAULT_LIBRARY)
         self._mode = self.MODE_BROWSE
+        self._channel_meta: dict[str, dict] = {}
 
     def compose(self) -> ComposeResult:
         tree: Tree[Folder | Station] = Tree("Library")
@@ -229,6 +236,148 @@ class StationList(Container):
         self._rebuild_tree()
         self._save_and_broadcast()
 
+    # --- Import YouTube channel ---
+
+    async def action_import_channel(self) -> None:
+        if self._mode != self.MODE_BROWSE:
+            return
+        self._mode = self.MODE_IMPORT_CHANNEL
+        form = Vertical(
+            Static("Import YouTube channel/playlist URL:", classes="edit-label"),
+            Input(placeholder="https://www.youtube.com/@channel", id="input-url"),
+            classes="edit-form",
+        )
+        await self.mount(form)
+        self.query_one("#input-url", Input).focus()
+
+    def _fetch_channel_entries(
+        self, url: str, limit: int, offset: int
+    ) -> tuple[str, list[tuple[str, str]]]:
+        """Fetch video entries from a YouTube channel/playlist. Returns (channel_name, [(title, url)])."""
+        ytdlp = shutil.which("yt-dlp")
+        if not ytdlp:
+            return ("", [])
+        start = offset + 1  # yt-dlp uses 1-based indexing
+        end = offset + limit
+        try:
+            result = subprocess.run(
+                [
+                    ytdlp, "--flat-playlist", "--no-download",
+                    "--playlist-start", str(start),
+                    "--playlist-end", str(end),
+                    "--print", "%(playlist_title)s\t%(title)s\t%(webpage_url)s",
+                    url,
+                ],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return ("", [])
+            entries = []
+            channel_name = ""
+            for line in result.stdout.strip().splitlines():
+                parts = line.split("\t", 2)
+                if len(parts) == 3:
+                    if not channel_name and parts[0] and parts[0] != "NA":
+                        channel_name = parts[0]
+                    title = parts[1] if parts[1] and parts[1] != "NA" else "Untitled"
+                    video_url = parts[2] if parts[2] and parts[2] != "NA" else ""
+                    if video_url:
+                        entries.append((title, video_url))
+            return (channel_name, entries)
+        except (subprocess.TimeoutExpired, OSError):
+            return ("", [])
+
+    async def _commit_import_channel(self) -> None:
+        url = self.query_one("#input-url", Input).value.strip()
+        if not url:
+            return
+        try:
+            label = self.query_one(".edit-form .edit-label", Static)
+            label.update(f"Fetching channel ({self.CHANNEL_PAGE_SIZE} videos)...")
+        except Exception:
+            pass
+        channel_name, entries = await asyncio.to_thread(
+            self._fetch_channel_entries, url, self.CHANNEL_PAGE_SIZE, 0
+        )
+        self._remove_edit_ui()
+        if not entries:
+            return
+        if not channel_name:
+            channel_name = url.rstrip("/").split("/")[-1]
+        folder = Folder(channel_name, [Station(t, u, "YouTube") for t, u in entries], channel_url=url)
+        self._library.append(folder)
+        self._channel_meta[channel_name] = {
+            "offset": len(entries),
+            "exhausted": len(entries) < self.CHANNEL_PAGE_SIZE,
+        }
+        self._rebuild_tree()
+        self._save_and_broadcast()
+
+    def _get_channel_meta(self, folder: Folder) -> dict:
+        """Get or initialize channel pagination state for a channel folder."""
+        if folder.name not in self._channel_meta:
+            self._channel_meta[folder.name] = {
+                "offset": len(folder.stations),
+                "exhausted": False,
+            }
+        return self._channel_meta[folder.name]
+
+    async def action_load_more(self) -> None:
+        if self._mode != self.MODE_BROWSE:
+            return
+        node = self._selected_node()
+        folder = self._find_folder_for_node(node)
+        if folder is None or not folder.is_channel:
+            return
+        meta = self._get_channel_meta(folder)
+        if meta.get("exhausted"):
+            return
+        self._mode = self.MODE_IMPORT_CHANNEL
+        form = Vertical(
+            Static(f"Loading more from '{folder.name}'...", classes="edit-label"),
+            classes="edit-form",
+        )
+        await self.mount(form)
+        _, entries = await asyncio.to_thread(
+            self._fetch_channel_entries, folder.channel_url, self.CHANNEL_PAGE_SIZE, meta["offset"]
+        )
+        self._remove_edit_ui()
+        if not entries:
+            meta["exhausted"] = True
+            return
+        for title, video_url in entries:
+            folder.stations.append(Station(title, video_url, "YouTube"))
+        meta["offset"] += len(entries)
+        if len(entries) < self.CHANNEL_PAGE_SIZE:
+            meta["exhausted"] = True
+        self._rebuild_tree()
+        self._save_and_broadcast()
+
+    # --- Save channel video to library ---
+
+    async def action_save_to_library(self) -> None:
+        if self._mode != self.MODE_BROWSE:
+            return
+        node = self._selected_node()
+        if node is None or not isinstance(node.data, Station):
+            return
+        folder = self._find_folder_for_node(node)
+        if folder is None or not folder.is_channel:
+            return
+        station = node.data
+        # Find or create the YouTube folder (non-channel)
+        yt_folder = None
+        for f in self._library:
+            if f.name == "YouTube" and not f.is_channel:
+                yt_folder = f
+                break
+        if yt_folder is None:
+            yt_folder = Folder("YouTube")
+            self._library.append(yt_folder)
+        yt_folder.stations.append(Station(station.name, station.url, station.genre))
+        self._rebuild_tree()
+        self._save_and_broadcast()
+
     # --- Delete ---
 
     async def action_delete_item(self) -> None:
@@ -371,5 +520,7 @@ class StationList(Container):
                 self.query_one("#input-genre", Input).focus()
             else:
                 self._commit_edit()
+        elif self._mode == self.MODE_IMPORT_CHANNEL:
+            await self._commit_import_channel()
         elif self._mode == self.MODE_NEW_FOLDER:
             self._commit_new_folder()
