@@ -192,9 +192,11 @@ class BrowserView(Screen):
 
     # --- Edit mode ---
 
-    def action_edit_playlist(self) -> None:
-        """Enter playlist edit mode (local mode only)."""
+    async def action_edit_playlist(self) -> None:
+        """Enter playlist edit mode (local), or delegate to StationList edit (radio)."""
         if self.app.playlist_mode != "local":
+            # In radio mode, delegate 'e' to StationList's edit action
+            await self.query_one(StationList).action_edit_station()
             return
         if self._edit_mode:
             return
